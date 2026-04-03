@@ -80,6 +80,7 @@ status: inbox | needs_action | done
 - File contents of any kind
 - Any credentials or auth tokens in the vault
 
+
 **Credentials handling:**
 - `credentials.json` and `token.json` live in the project folder only
 - Never copied to the vault
