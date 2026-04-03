@@ -1,6 +1,6 @@
 # AI Employee Dashboard
 
-_Last updated: never (system not yet started)_
+_Last updated: 2026-04-04 02:16:32_
 
 ---
 
@@ -8,9 +8,9 @@ _Last updated: never (system not yet started)_
 
 | Component        | Status  | Last Run | Notes                  |
 |------------------|---------|----------|------------------------|
-| File Monitor     | OFFLINE | —        | Watchdog not started   |
+| File Monitor    | ONLINE        | 2026-04-04 02:14| Scanned Downloads     |
 | Gmail Monitor    | OFFLINE | —        | OAuth not configured   |
-| Dashboard Updater| OFFLINE | —        | Not yet scheduled      |
+| Dashboard Updater| ONLINE        | 2026-04-04 02:14| Active                |
 | Inbox Processor  | OFFLINE | —        | No items in queue      |
 
 ---
@@ -19,9 +19,9 @@ _Last updated: never (system not yet started)_
 
 | Metric              | Value |
 |---------------------|-------|
-| Files monitored     | 0     |
+| Files monitored     | 226     |
 | Emails checked      | 0     |
-| Tasks in Inbox      | 0     |
+| Tasks in Inbox      | 226     |
 | Tasks in Needs_Action | 0   |
 | Tasks completed     | 0     |
 
@@ -29,9 +29,7 @@ _Last updated: never (system not yet started)_
 
 ## Recent Activity
 
-_No activity recorded yet._
-
----
+- `2026-04-04 02:14` -- file-monitor scanned ~/Downloads -- 226 cards created
 
 ## Current Alerts
 
