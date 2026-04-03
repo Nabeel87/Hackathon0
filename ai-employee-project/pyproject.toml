@@ -1,7 +1,13 @@
 [project]
-name = "ai-employee-project"
+name = "ai-employee-bronze"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bronze Tier AI Employee - File & Gmail monitoring with agent skills"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+    "watchdog",
+    "python-frontmatter",
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+]
