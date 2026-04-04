@@ -87,23 +87,18 @@ def _write(vault_path: Path, content: str) -> None:
 
 
 def _stamp(content: str) -> str:
-    """Replace the _Last updated:_ line with the current timestamp."""
+    """Replace ALL _Last updated:_ lines with a single current timestamp."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    updated = re.sub(
-        r"_Last updated:.*?_",
-        f"_Last updated: {now}_",
+    # Remove every existing timestamp line
+    content = re.sub(r"\n?_Last updated:.*?_\n?", "", content)
+    # Insert one timestamp immediately after the first heading line
+    content = re.sub(
+        r"(# .+\n)",
+        rf"\1\n_Last updated: {now}_\n",
         content,
         count=1,
     )
-    # If the marker wasn't found, insert it after the first heading
-    if updated == content:
-        updated = re.sub(
-            r"(# .+\n)",
-            rf"\1\n_Last updated: {now}_\n",
-            content,
-            count=1,
-        )
-    return updated
+    return content
 
 
 # ── Section helpers ───────────────────────────────────────────────────────────
