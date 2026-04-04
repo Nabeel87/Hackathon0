@@ -148,7 +148,7 @@ def process_inbox(vault_path: str | Path) -> dict:
     cards = sorted(f for f in inbox_dir.iterdir() if f.is_file() and f.suffix == ".md")
 
     if not cards:
-        print("[inbox-processor] Inbox is empty — nothing to process.")
+        print("[inbox-processor] Inbox is empty - nothing to process.")
         return summary
 
     print(f"[inbox-processor] Found {len(cards)} card(s) in Inbox.\n")
