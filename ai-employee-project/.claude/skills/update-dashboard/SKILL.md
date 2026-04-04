@@ -15,7 +15,7 @@ config:
 
 Reads `Dashboard.md` from the vault, applies one or more targeted updates
 (activity log, stat counter, component status, or full vault resync), then
-writes the file back. No Python module required — operates directly on the file.
+writes the file back. Implemented in `helpers/dashboard_updater.py`.
 
 ---
 
@@ -29,13 +29,48 @@ writes the file back. No Python module required — operates directly on the fil
 
 ---
 
+## How to Run
+
+**CLI (from project root):**
+```
+cd ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+
+# Log an activity entry
+python -m helpers.dashboard_updater --activity "File monitor scanned ~/Downloads - 2 new files"
+
+# Set a stat to an exact value
+python -m helpers.dashboard_updater --stat files_monitored --value 5
+
+# Increment a stat
+python -m helpers.dashboard_updater --stat emails_checked --value 1 --operation increment
+
+# Update a component status
+python -m helpers.dashboard_updater --component "File Monitor" --status running
+python -m helpers.dashboard_updater --component "Gmail Monitor" --status offline
+python -m helpers.dashboard_updater --component "Inbox Processor" --status error --notes "Parse failed"
+
+# Resync all vault folder counts
+python -m helpers.dashboard_updater --refresh-counts
+```
+
+**From Python (import):**
+```
+Module:    helpers.dashboard_updater
+Functions: update_activity(vault_path, message)
+           update_stats(vault_path, stat_name, value, operation='set')
+           update_component_status(vault_path, component, status, notes='')
+           refresh_vault_counts(vault_path)
+```
+
+---
+
 ## Process
 
 1. Read `Dashboard.md` from `~/Desktop/Hackathon/Hackathon0/AI_Employee_Vault/`
 2. Determine which operation(s) to apply based on what just ran (see Operations below)
 3. Apply each operation by editing the relevant section or table row in place
 4. Update the `_Last updated:_` timestamp at the top of the file
-5. Write the file back — use a `.tmp` swap to avoid partial writes
+5. Write the file back
 
 ---
 
@@ -132,9 +167,10 @@ Use Operation D after any bulk move (e.g. after `process-inbox` finishes).
 
 ## Dependencies
 
+- `helpers/dashboard_updater.py` — provides all four update functions
+- `helpers/__init__.py` — makes `helpers` a Python package
 - `Vault/Dashboard.md` — must exist; created during initial vault setup
-- No Python packages required — standard file read/write only
-- No `watchers/` module needed
+- No third-party packages required — standard library only (`re`, `datetime`, `pathlib`)
 
 ---
 
