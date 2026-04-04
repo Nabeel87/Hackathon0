@@ -13,29 +13,37 @@ config:
 
 # Skill: update-dashboard
 
-Reads `Dashboard.md` from the vault, updates the relevant section (activity log,
-stats table, or status table), and writes the file back. No external libraries needed.
+Reads `Dashboard.md` from the vault, applies one or more targeted updates
+(activity log, stat counter, component status, or full vault resync), then
+writes the file back. No Python module required — operates directly on the file.
 
 ---
 
-## What This Skill Does
+## Purpose
 
-1. Reads `Dashboard.md` from the vault
-2. Applies one or more of the three update operations below
-3. Stamps the `_Last updated:_` line at the top of the file
-4. Writes the file back atomically (via a `.tmp` swap)
+- Keeps Dashboard.md accurate after every skill run so the AI employee's status is always visible
+- Provides a timestamped activity log of everything the system has done
+- Tracks key counters: files monitored, emails checked, tasks in each vault folder
+- Shows live status of each system component (running, offline, error)
+- Acts as the single post-run step called by all other skills
 
 ---
 
-## How to Run
+## Process
 
-The dashboard has three update operations. Use whichever apply after a skill runs:
+1. Read `Dashboard.md` from `~/Desktop/Hackathon/Hackathon0/AI_Employee_Vault/`
+2. Determine which operation(s) to apply based on what just ran (see Operations below)
+3. Apply each operation by editing the relevant section or table row in place
+4. Update the `_Last updated:_` timestamp at the top of the file
+5. Write the file back — use a `.tmp` swap to avoid partial writes
 
-### Operation A — Log an activity entry
+---
 
-Add a timestamped line to the `## Recent Activity` section. Keeps the 20 most recent entries.
+## Operations
 
-**When to use:** After any skill completes — file scan, email check, inbox processing.
+### A — Log an activity entry
+
+Prepend a timestamped line to the `## Recent Activity` section. Keep only the 20 most recent entries.
 
 **Format:** `- \`YYYY-MM-DD HH:MM\` — <message>`
 
@@ -46,71 +54,63 @@ Add a timestamped line to the `## Recent Activity` section. Keeps the 20 most re
 
 ---
 
-### Operation B — Update a stat counter
+### B — Update a stat counter
 
-Update a single row in the `## Quick Stats` table by incrementing (`+1`), decrementing (`-1`), or setting to an exact value.
+Find the matching row in the `## Quick Stats` table and increment, decrement, or set it to an exact value.
 
-**Valid stat names and their table labels:**
-
-| Stat name | Table label |
-|-----------|-------------|
+| Stat key | Table label |
+|----------|-------------|
 | `files_monitored` | Files monitored |
 | `emails_checked` | Emails checked |
 | `tasks_in_inbox` | Tasks in Inbox |
 | `tasks_in_needs_action` | Tasks in Needs_Action |
 | `tasks_completed` | Tasks completed |
 
-**When to use:**
-- After `file-monitor` runs → increment `files_monitored` by count of new cards
-- After `gmail-monitor` runs → increment `emails_checked` by count of new cards
-- After `process-inbox` moves cards → decrement `tasks_in_inbox`, increment destination counter
+**When to apply:**
+- After `file-monitor` → increment `files_monitored` by the number of new cards
+- After `gmail-monitor` → increment `emails_checked` by the number of new cards
+- After `process-inbox` → decrement `tasks_in_inbox`, increment destination counter
 
 ---
 
-### Operation C — Update a component status row
+### C — Update a component status row
 
-Update a row in the `## System Status` table with a new status, last-run time, and optional note.
+Find the matching row in the `## System Status` table and replace status, last-run time, and notes.
 
 **Valid components:** `File Monitor`, `Gmail Monitor`, `Dashboard Updater`, `Inbox Processor`
 
-**Valid statuses and their display values:**
-
-| Status | Displayed as |
-|--------|-------------|
-| `ONLINE` | ✅ Running |
-| `OFFLINE` | ⏸️ Not Running |
-| `ERROR` | ❌ Error |
-| `READY` | ✅ Ready |
-
-**When to use:** After any watcher starts, stops, or errors.
+| Status value | Displayed as |
+|-------------|-------------|
+| `ONLINE` | Running |
+| `OFFLINE` | Not Running |
+| `ERROR` | Error |
+| `READY` | Ready |
 
 ---
 
-### Operation D — Resync vault counts (full refresh)
+### D — Resync vault counts (full refresh)
 
-Count files in `Inbox/`, `Needs_Action/`, and `Done/` folders and set the corresponding stats to exact values. Use after any bulk operation.
+Count all `.md` files in each vault folder and set the three task stats to exact values.
 
-**Steps:**
 1. Count `.md` files in `Vault/Inbox/`
 2. Count `.md` files in `Vault/Needs_Action/`
 3. Count `.md` files in `Vault/Done/`
 4. Set `tasks_in_inbox`, `tasks_in_needs_action`, `tasks_completed` to those counts
 
----
-
-## Dashboard File Location
-
-```
-~/Desktop/Hackathon/Hackathon0/AI_Employee_Vault/Dashboard.md
-```
+Use Operation D after any bulk move (e.g. after `process-inbox` finishes).
 
 ---
 
-## Expected Output
+## Usage Examples
+
+> "Update the dashboard"
+> "Refresh dashboard"
+> "Log activity to dashboard"
+> "Update stats"
 
 **Activity logged:**
 ```
-[update-dashboard] Activity logged: `2026-04-04 14:30` — Gmail monitor found 1 priority email
+[update-dashboard] Activity logged: `2026-04-05 14:30` — Gmail monitor found 1 priority email
 ```
 
 **Stat updated:**
@@ -120,7 +120,7 @@ Count files in `Inbox/`, `Needs_Action/`, and `Done/` folders and set the corres
 
 **Component status updated:**
 ```
-[update-dashboard] Status updated: File Monitor → ✅ Running at 2026-04-04 14:30
+[update-dashboard] Status updated: File Monitor → Running at 2026-04-05 14:30
 ```
 
 **Vault counts synced:**
@@ -130,12 +130,18 @@ Count files in `Inbox/`, `Needs_Action/`, and `Done/` folders and set the corres
 
 ---
 
-## When to Invoke
+## Dependencies
 
-This skill should be called at the end of every other skill run:
+- `Vault/Dashboard.md` — must exist; created during initial vault setup
+- No Python packages required — standard file read/write only
+- No `watchers/` module needed
 
-| Trigger skill | What to update |
-|---------------|---------------|
-| `file-monitor` | Log activity, increment `files_monitored`, update `File Monitor` status |
-| `gmail-monitor` | Log activity, increment `emails_checked`, update `Gmail Monitor` status |
-| `process-inbox` | Log activity, resync all vault counts (Operation D) |
+---
+
+## Notes
+
+- This skill is always the last step after any other skill runs — never skip it
+- Operation D (full resync) is preferred over manual +1/-1 updates after bulk operations since it guarantees accuracy
+- The `_Last updated:_` line must appear exactly once at the top of Dashboard.md for the timestamp stamp to work
+- If a section header (e.g. `## Recent Activity`) is missing from Dashboard.md, log an error and skip that operation rather than failing entirely
+- Never truncate or rewrite the entire Dashboard — only edit the targeted section or row
