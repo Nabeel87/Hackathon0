@@ -14,74 +14,72 @@ config:
     - asap
     - invoice
     - payment
-  labels:
-    - IMPORTANT
-    - INBOX
   credentials_dir: ~/Desktop/Hackathon/Hackathon0/ai-employee-project/.credentials
   vault_inbox: ~/Desktop/Hackathon/Hackathon0/AI_Employee_Vault/Inbox
 ---
 
 # Skill: gmail-monitor
 
-Scans your Gmail inbox for unread emails matching priority keywords, then
-creates structured task cards in the vault Inbox for each match. Uses
-read-only OAuth2 — it never sends, deletes, or modifies anything.
+Checks Gmail for unread priority emails matching keywords, then creates
+structured task cards in the vault Inbox. Read-only OAuth2 — never sends,
+deletes, or modifies anything.
 
 ---
 
-## Gmail API Setup
+## What This Skill Does
 
-### Step 1 — Create a Google Cloud project
+1. Authenticates with Gmail using saved `token.json` (no browser unless first run)
+2. Queries inbox: `is:unread label:inbox ("urgent" OR "asap" OR "invoice" OR "payment")`
+3. Skips any message already logged (checked by message ID in vault Inbox filenames)
+4. For each new match, creates an `EMAIL_*.md` card in `Vault/Inbox/`
+5. Calls the `update-dashboard` skill after all cards are created
 
-1. Go to [https://console.cloud.google.com/](https://console.cloud.google.com/)
-2. Click **Select a project** → **New Project**
-3. Name it `ai-employee` and click **Create**
+---
 
-### Step 2 — Enable the Gmail API
+## How to Run
 
-1. In the left sidebar go to **APIs & Services → Library**
-2. Search for **Gmail API** and click it
-3. Click **Enable**
-
-### Step 3 — Create OAuth2 credentials
-
-1. Go to **APIs & Services → Credentials**
-2. Click **Create Credentials → OAuth client ID**
-3. If prompted, configure the **OAuth consent screen** first:
-   - User type: **External**
-   - App name: `AI Employee`
-   - Add your Gmail address as a test user
-4. Back in Create Credentials, choose:
-   - Application type: **Desktop app**
-   - Name: `ai-employee-desktop`
-5. Click **Create** then **Download JSON**
-
-### Step 4 — Save credentials.json
-
-Place the downloaded file at:
+Import and call `GmailWatcher` from `watchers/gmail_watcher.py` for a single-shot check:
 
 ```
-ai-employee-project/.credentials/credentials.json
+Project root: ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+Module:       watchers.gmail_watcher
+Class:        GmailWatcher(vault_path)
+Methods:      _get_service() → authenticate
+              check_for_updates() → list of email dicts
+              create_action_file(item) → writes vault card
 ```
 
-Create the folder if it doesn't exist:
-```bash
-mkdir -p ~/Desktop/Hackathon/Hackathon0/ai-employee-project/.credentials
-mv ~/Downloads/client_secret_*.json \
-   ~/Desktop/Hackathon/Hackathon0/ai-employee-project/.credentials/credentials.json
+1. Instantiate `GmailWatcher` with `vault_path`
+2. Call `watcher._get_service()` to authenticate (reuses `token.json`, auto-refreshes)
+3. Call `watcher.check_for_updates()` once — returns list of new email dicts
+4. Call `watcher.create_action_file(item)` for each result
+5. After all cards created, invoke the `update-dashboard` skill
+
+---
+
+## Gmail API Setup (first time only)
+
+### Prerequisites
+
+1. Go to Google Cloud Console → create project `ai-employee`
+2. Enable the **Gmail API** under APIs & Services → Library
+3. Create **OAuth client ID** → Desktop app → download JSON
+4. Save the file to `.credentials/credentials.json`
+
+### Credentials location
+
+```
+ai-employee-project/.credentials/credentials.json   ← downloaded from Google
+ai-employee-project/.credentials/token.json         ← auto-created on first run
 ```
 
-The `.credentials/` folder is listed in `.gitignore` — it will never be committed.
+Both files are in `.gitignore` and will never be committed.
 
-### Step 5 — First-run authorization
+### First-run authorization
 
-The first time this skill runs it will:
-1. Open a browser window asking you to log in to Google
-2. Ask you to grant read-only Gmail access to the app
-3. Save a `token.json` file next to `credentials.json`
-
-All subsequent runs reuse `token.json` and refresh it automatically. You
-will not be prompted again unless the token is deleted or revoked.
+On first run, a browser window opens to grant `gmail.readonly` access.
+After approval, `token.json` is saved automatically.
+All future runs reuse and auto-refresh `token.json` — no browser needed.
 
 ---
 
@@ -89,106 +87,18 @@ will not be prompted again unless the token is deleted or revoked.
 
 | Property | Detail |
 |----------|--------|
-| Scope | `gmail.readonly` — zero write access to your account |
+| Scope | `gmail.readonly` — zero write access |
 | Data stored | Sender, subject, 200-char snippet only — no full body |
-| Credentials location | Local disk only, inside `.credentials/` |
+| Credentials | Local disk only, never committed to git |
 | Token refresh | Automatic via `google-auth` library |
-| Network calls | Only to `gmail.googleapis.com` — no third-party services |
-| Committed to git | Never — `.credentials/` is in `.gitignore` |
+| Network calls | Only to `gmail.googleapis.com` |
 
 ---
 
-## Implementation
+## Output: Vault Card Format
 
-```python
-import sys
-from pathlib import Path
+Each matching email produces a card at `Vault/Inbox/EMAIL_YYYYMMDD_HHMMSS_<msgid>_<subject>.md`:
 
-# Ensure project root is on the path so watchers package is importable
-PROJECT_ROOT = Path.home() / "Desktop/Hackathon/Hackathon0/ai-employee-project"
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from watchers.gmail_watcher import GmailWatcher
-
-# ── Config ────────────────────────────────────────────────────────────────────
-
-VAULT_PATH = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
-
-# ── Single-shot check (no continuous loop) ────────────────────────────────────
-
-def run():
-    print("[gmail-monitor] Authenticating with Gmail API...")
-
-    watcher = GmailWatcher(vault_path=VAULT_PATH)
-
-    try:
-        # Initialise the Gmail service (handles token refresh / first-run OAuth)
-        watcher._service = watcher._get_service()
-    except FileNotFoundError as e:
-        print(f"[gmail-monitor] Setup required:\n{e}")
-        return []
-
-    # Single call — no loop, no sleep
-    items = watcher.check_for_updates()
-    print(f"[gmail-monitor] {len(items)} matching unread email(s) found.")
-
-    new_cards = []
-    for item in items:
-        card_path = watcher.create_action_file(item)
-        new_cards.append(card_path)
-        print(f"  [new]  Card created: {card_path.name}")
-
-    if new_cards:
-        print(f"\n[gmail-monitor] {len(new_cards)} new inbox card(s) created.")
-        print("[gmail-monitor] Calling update-dashboard to refresh status...")
-    else:
-        print("[gmail-monitor] No new priority emails to log.")
-
-    return new_cards
-
-
-run()
-```
-
----
-
-## Dashboard Integration
-
-After this skill runs, always invoke the `update-dashboard` skill so
-Dashboard.md reflects the latest email count, last-checked time, and any
-high-priority alerts.
-
----
-
-## Usage Examples
-
-**Invoke manually:**
-> "Check Gmail"
-> "Check my email"
-> "Scan inbox"
-> "Monitor email"
-
-**Expected output (matches found):**
-```
-[gmail-monitor] Authenticating with Gmail API...
-[gmail-monitor] Query: is:unread label:inbox ("urgent" OR "asap" OR "invoice" OR "payment")
-[gmail-monitor] 2 matching unread email(s) found.
-  [new]  Card created: EMAIL_20260404_143055_1a2b3c4d_Invoice_for_April_services.md
-  [new]  Card created: EMAIL_20260404_091200_5e6f7a8b_Urgent_contract_review_needed.md
-[gmail-monitor] 2 new inbox card(s) created.
-[gmail-monitor] Calling update-dashboard to refresh status...
-```
-
-**Expected output (nothing new):**
-```
-[gmail-monitor] Authenticating with Gmail API...
-[gmail-monitor] Query: is:unread label:inbox ("urgent" OR "asap" OR "invoice" OR "payment")
-[gmail-monitor] 0 matching unread email(s) found.
-[gmail-monitor] No new priority emails to log.
-```
-
-**Vault card produced** (`Inbox/EMAIL_20260404_143055_1a2b3c4d_Invoice_for_April_services.md`):
 ```yaml
 ---
 type: email
@@ -201,10 +111,36 @@ message_id: "1a2b3c4d5e6f7a8b"
 ---
 ```
 
+**Priority rules:**
+- `high` — subject or snippet contains `urgent` or `asap`
+- `normal` — contains `invoice` or `payment` (finance checklist attached)
+
 ---
 
-## Dependencies
+## Expected Output
 
-- `google-api-python-client` — Gmail REST API client
-- `google-auth-httplib2` — HTTP transport for Google auth
-- `google-auth-oauthlib` — OAuth2 browser flow and token management
+**Emails found:**
+```
+[gmail-monitor] Authenticating with Gmail API...
+[gmail-monitor] Query: is:unread label:inbox ("urgent" OR "asap" OR "invoice" OR "payment")
+[gmail-monitor] 2 matching unread email(s) found.
+  [new]  Card created: EMAIL_20260404_143055_1a2b3c4d_Invoice_for_April.md
+  [new]  Card created: EMAIL_20260404_091200_5e6f7a8b_Urgent_contract_review.md
+[gmail-monitor] 2 new inbox card(s) created.
+[gmail-monitor] Calling update-dashboard to refresh status...
+```
+
+**Nothing new:**
+```
+[gmail-monitor] Authenticating with Gmail API...
+[gmail-monitor] Query: is:unread label:inbox ("urgent" OR "asap" OR "invoice" OR "payment")
+[gmail-monitor] 0 matching unread email(s) found.
+[gmail-monitor] No new priority emails to log.
+```
+
+---
+
+## After This Skill Runs
+
+Always invoke the `update-dashboard` skill so Dashboard.md reflects the latest
+email count, last-checked time, and any high-priority alerts.

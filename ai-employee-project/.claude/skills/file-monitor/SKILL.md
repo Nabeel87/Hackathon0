@@ -18,194 +18,102 @@ config:
 
 # Skill: file-monitor
 
-Scans configured folders for new files, filters out anything sensitive, and
-creates structured task cards in the vault Inbox for each safe file detected.
+Scans `~/Downloads` for new files, filters out anything sensitive or temporary,
+and creates structured task cards in the vault Inbox for each safe file found.
 
 ---
 
-## Privacy & Security
+## What This Skill Does
 
-### Why only ~/Downloads by default
+1. Scans `~/Downloads` for all files (non-recursive)
+2. Skips hidden files (`.dotfiles`), temp files (`~file`, `.tmp`, `.part`), and anything matching the security blacklist
+3. For each new safe file not already logged, creates a `FILE_*.md` card in `Vault/Inbox/`
+4. Calls the `update-dashboard` skill after all cards are created
 
-`~/Downloads` is the one folder where files arrive from outside — browser
-downloads, email attachments saved manually, shared files. It has no personal
-documents, no system config, and no secrets. Monitoring it gives maximum signal
-with minimal privacy risk.
+---
 
-All other folders (`~/Documents`, `~/Desktop`, `~/Pictures`, `~/.ssh`, etc.)
-are **off by default** because they contain personal or sensitive material that
-an AI employee has no business reading.
+## How to Run
 
-### What NEVER to monitor
+Import and call `FileWatcher` from `watchers/file_watcher.py` for a single-shot scan:
 
-Even if a user adds a folder to `monitored_folders`, these patterns are always
-blocked by the blacklist and will never produce vault entries:
+```
+Project root: ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+Module:       watchers.file_watcher
+Class:        FileWatcher(vault_path, watch_dir)
+Method:       create_action_file(item)
+```
+
+1. Instantiate `FileWatcher` with `vault_path` and `watch_dir`
+2. Iterate files in `watch_dir`, filter with `_is_safe(path)`
+3. Build an `item` dict: `path`, `name`, `suffix`, `size_bytes`, `detected_at`
+4. Call `watcher.create_action_file(item)` for each file
+5. After all cards created, invoke the `update-dashboard` skill
+
+---
+
+## Security Blacklist
+
+These patterns are **always blocked** — no vault card is ever created for them:
 
 | Pattern | Reason |
 |---------|--------|
-| `.ssh` | SSH keys and config — catastrophic if leaked |
-| `.config` | App credentials, tokens, personal settings |
-| `.env` | Environment files almost always contain secrets |
+| `.ssh` | SSH keys — catastrophic if exposed |
+| `.config` | App credentials and personal settings |
+| `.env` | Almost always contains secrets |
 | `credentials` | Any file with this in the name |
 | `passwords` | Any file with this in the name |
+| `secret`, `private_key`, `id_rsa` | Cryptographic material |
+| `.pem`, `.p12`, `.pfx` | Certificate and key files |
 
-The blacklist is checked against the **full file path**, so a file at
-`~/Downloads/my-credentials-backup.csv` is also blocked.
+The blacklist applies to the **full file path**, so `~/Downloads/my-credentials-backup.csv` is also blocked.
 
-### How to add safe folders
+---
 
-Edit the `config.monitored_folders` list in this file's frontmatter:
+## Output: Vault Card Format
+
+Each detected file produces a card at `Vault/Inbox/FILE_YYYYMMDD_HHMMSS_<name>.md`:
 
 ```yaml
-config:
-  monitored_folders:
-    - ~/Downloads
-    - ~/Desktop/work-inbox    # explicit subfolder, not all of Desktop
+---
+type: file
+name: "report.pdf"
+path: "/home/user/Downloads/report.pdf"
+size_kb: 1230.4
+file_type: ".pdf"
+detected: "2026-04-04 14:30:22 UTC"
+priority: high
+status: pending
+---
 ```
 
-Only add folders that contain external or work-related files. Never add home
-directory root (`~`) or system folders.
-
-### Blacklist protection
-
-The blacklist runs **after** folder config. A folder can be in `monitored_folders`
-and a file can still be silently skipped if its path matches any ignored pattern.
-There is no way to whitelist a blacklisted pattern — safety wins.
+**Priority rules:**
+- `high` — `.pdf`, `.docx`, `.xlsx`, `.zip`, `.exe`, or filename contains `urgent`/`invoice`/`contract`/`payment`
+- `normal` — everything else
 
 ---
 
-## Implementation
+## Expected Output
 
-When this skill is invoked, execute the following Python code using the
-available environment.
-
-```python
-import sys
-from pathlib import Path
-
-# Ensure project root is on the path so watchers package is importable
-PROJECT_ROOT = Path.home() / "Desktop/Hackathon/Hackathon0/ai-employee-project"
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from watchers.file_watcher import FileWatcher
-
-# ── Config ────────────────────────────────────────────────────────────────────
-
-VAULT_PATH  = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
-WATCH_DIR   = Path.home() / "Downloads"
-
-# ── Single-shot scan (no continuous loop) ─────────────────────────────────────
-
-def run():
-    print("[file-monitor] Starting single-shot scan...")
-
-    watcher = FileWatcher(vault_path=VAULT_PATH, watch_dir=WATCH_DIR)
-
-    # Seed the watchdog observer, snapshot current Downloads contents,
-    # then drain immediately — no sleep, no polling loop.
-    watcher.watch_dir.mkdir(parents=True, exist_ok=True)
-
-    from watchdog.observers import Observer
-    observer = Observer()
-    observer.schedule(watcher._handler, str(watcher.watch_dir), recursive=False)
-    observer.start()
-
-    # Snapshot existing files in Downloads (watchdog only fires on NEW events,
-    # so we scan the folder directly for a one-shot check).
-    from datetime import datetime, timezone
-    items = []
-    for path in watcher.watch_dir.iterdir():
-        if not path.is_file():
-            continue
-        from watchers.file_watcher import _is_safe
-        if not _is_safe(path):
-            continue
-        try:
-            stat = path.stat()
-            items.append({
-                "path": path,
-                "name": path.name,
-                "suffix": path.suffix.lower(),
-                "size_bytes": stat.st_size,
-                "detected_at": datetime.now(tz=timezone.utc),
-            })
-        except FileNotFoundError:
-            pass
-
-    observer.stop()
-    observer.join()
-
-    print(f"[file-monitor] {len(items)} eligible file(s) found in {watcher.watch_dir}")
-
-    new_cards = []
-    for item in items:
-        card_path = watcher.create_action_file(item)
-        new_cards.append(card_path)
-        print(f"  [new]  Card created: {card_path.name}")
-
-    if new_cards:
-        print(f"\n[file-monitor] {len(new_cards)} new inbox card(s) created.")
-        print("[file-monitor] Calling update-dashboard to refresh status...")
-    else:
-        print("[file-monitor] No new files detected.")
-
-    return new_cards
-
-
-run()
+**Files found:**
 ```
-
----
-
-## Dashboard Integration
-
-After this skill runs, always invoke the `update-dashboard` skill so the
-Dashboard.md reflects the latest file count and recent activity. Pass the
-number of new cards created as context.
-
----
-
-## Usage Examples
-
-**Invoke manually:**
-> "Check for new files"
-> "Monitor downloads"
-> "Scan downloads folder"
-
-**Expected output (new file found):**
-```
-[file-monitor] Starting scan...
-[file-monitor] 1 eligible file(s) found in /home/user/Downloads
-  [new]  Card created: FILE_20260404_143022_a1b2c3d4_report.pdf.md
-[file-monitor] 1 new inbox card(s) created.
+[file-monitor] Starting single-shot scan...
+[file-monitor] 2 eligible file(s) found in ~/Downloads
+  [new]  Card created: FILE_20260404_143022_report_pdf.md
+  [new]  Card created: FILE_20260404_143022_invoice_April.md
+[file-monitor] 2 new inbox card(s) created.
 [file-monitor] Calling update-dashboard to refresh status...
 ```
 
-**Expected output (nothing new):**
+**Nothing new:**
 ```
-[file-monitor] Starting scan...
-[file-monitor] 0 eligible file(s) found in /home/user/Downloads
+[file-monitor] Starting single-shot scan...
+[file-monitor] 0 eligible file(s) found in ~/Downloads
 [file-monitor] No new files detected.
 ```
 
-**Vault card produced** (`Inbox/FILE_20260404_143022_a1b2c3d4_report.pdf.md`):
-```yaml
----
-type: file_drop
-file_name: report.pdf
-file_size: "1.2 MB (1258291 bytes)"
-file_path: /home/user/Downloads/report.pdf
-extension: .pdf
-detected_at: "2026-04-04 14:30:22"
-status: pending
-priority: normal
----
-```
-
 ---
 
-## Dependencies
+## After This Skill Runs
 
-- `watchdog` — filesystem event monitoring (install via `pip install watchdog`)
-- Standard library only beyond that: `os`, `re`, `hashlib`, `datetime`, `pathlib`
+Always invoke the `update-dashboard` skill so Dashboard.md reflects the latest
+file count and recent activity.
