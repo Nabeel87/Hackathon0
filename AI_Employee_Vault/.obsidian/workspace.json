@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Done/FILE_20260404_021921_89542781_test_temp.tmp.md",
+                "file": "Dashboard.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "FILE_20260404_021921_89542781_test_temp.tmp"
+              "title": "Dashboard"
             }
           }
         ]
@@ -185,8 +185,8 @@
   },
   "active": "440770069810eb28",
   "lastOpenFiles": [
-    "Dashboard.md",
     "Done/FILE_20260404_021921_89542781_test_temp.tmp.md",
+    "Dashboard.md",
     "Needs_Action/FILE_20260404_021921_703f5a2d_test_invoice.pdf.md",
     "Needs_Action/FILE_20260404_021921_7952c11e_test_archive.zip.md",
     "Needs_Action/FILE_20260404_021921_ff10f7c2_test_photo.jpg.md",
