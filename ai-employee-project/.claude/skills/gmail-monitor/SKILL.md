@@ -101,249 +101,41 @@ will not be prompted again unless the token is deleted or revoked.
 ## Implementation
 
 ```python
-import os
-import re
-import base64
-import json
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
-from email.utils import parseaddr
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+# Ensure project root is on the path so watchers package is importable
+PROJECT_ROOT = Path.home() / "Desktop/Hackathon/Hackathon0/ai-employee-project"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from watchers.gmail_watcher import GmailWatcher
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+VAULT_PATH = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
 
-CREDENTIALS_DIR = Path.home() / "Desktop/Hackathon/Hackathon0/ai-employee-project/.credentials"
-CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
-TOKEN_FILE = CREDENTIALS_DIR / "token.json"
-
-VAULT_INBOX = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault/Inbox"
-
-KEYWORDS = ["urgent", "asap", "invoice", "payment"]
-
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-def get_gmail_service():
-    """Authenticate and return an authorised Gmail API service object."""
-    creds = None
-
-    if TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[gmail-monitor] Refreshing access token...")
-            creds.refresh(Request())
-        else:
-            if not CREDENTIALS_FILE.exists():
-                raise FileNotFoundError(
-                    f"credentials.json not found at {CREDENTIALS_FILE}\n"
-                    "Follow the Gmail API Setup section in this SKILL.md to create it."
-                )
-            print("[gmail-monitor] Opening browser for first-time authorization...")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(CREDENTIALS_FILE), SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
-        print(f"[gmail-monitor] Token saved to {TOKEN_FILE}")
-
-    return build("gmail", "v1", credentials=creds)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def keyword_priority(subject: str, snippet: str) -> str:
-    """Return 'high' if any keyword appears in subject, else 'normal'."""
-    combined = (subject + " " + snippet).lower()
-    high_keywords = ["urgent", "asap"]
-    if any(kw in combined for kw in high_keywords):
-        return "high"
-    return "normal"
-
-
-def already_logged(message_id: str) -> bool:
-    """Check if a vault card for this message_id already exists."""
-    if not VAULT_INBOX.exists():
-        return False
-    return any(message_id in f.name for f in VAULT_INBOX.iterdir())
-
-
-def parse_received_time(internal_date_ms: str) -> tuple[str, str]:
-    """Convert Gmail internalDate (ms epoch) to ISO string and slug."""
-    ts = int(internal_date_ms) / 1000
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    iso = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
-    slug = dt.strftime("%Y%m%d_%H%M%S")
-    return iso, slug
-
-
-def suggested_actions(subject: str, snippet: str) -> str:
-    """Return a checklist tailored to detected email type."""
-    combined = (subject + " " + snippet).lower()
-    if "invoice" in combined or "payment" in combined:
-        return (
-            "- [ ] Verify invoice amount and sender legitimacy\n"
-            "- [ ] Check if payment is due or already processed\n"
-            "- [ ] Forward to accounts or log in expense tracker\n"
-            "- [ ] Reply to confirm receipt if required"
-        )
-    if "urgent" in combined or "asap" in combined:
-        return (
-            "- [ ] Read full email immediately\n"
-            "- [ ] Determine who needs to be notified\n"
-            "- [ ] Draft response or escalate within 1 hour\n"
-            "- [ ] Log outcome in Notes section below"
-        )
-    return (
-        "- [ ] Read full email\n"
-        "- [ ] Determine if action or reply is needed\n"
-        "- [ ] Archive or file when resolved"
-    )
-
-
-def safe_slug(text: str, max_len: int = 40) -> str:
-    """Convert arbitrary text to a filename-safe slug."""
-    slug = re.sub(r"[^\w\s-]", "", text).strip()
-    slug = re.sub(r"[\s_-]+", "_", slug)
-    return slug[:max_len]
-
-
-def create_inbox_card(msg_meta: dict) -> Path:
-    """Write a markdown task card to the vault Inbox and return its path."""
-    message_id = msg_meta["id"]
-    subject = msg_meta.get("subject", "(no subject)")
-    sender = msg_meta.get("sender", "unknown")
-    snippet = msg_meta.get("snippet", "")
-    received_iso, received_slug = parse_received_time(msg_meta["internalDate"])
-    priority = keyword_priority(subject, snippet)
-    actions = suggested_actions(subject, snippet)
-
-    subject_slug = safe_slug(subject)
-    card_name = f"EMAIL_{received_slug}_{message_id[:8]}_{subject_slug}.md"
-    card_path = VAULT_INBOX / card_name
-
-    VAULT_INBOX.mkdir(parents=True, exist_ok=True)
-
-    # Escape any quotes in YAML string fields
-    def yml(value: str) -> str:
-        return value.replace('"', '\\"')
-
-    card_content = f"""---
-type: email
-from: "{yml(sender)}"
-subject: "{yml(subject)}"
-received: "{received_iso}"
-priority: {priority}
-status: pending
-message_id: "{message_id}"
----
-
-# Email: {subject}
-
-**From:** {sender}
-**Received:** {received_iso}
-**Priority:** {priority}
-
----
-
-## Snippet
-
-> {snippet}
-
----
-
-## Suggested Actions
-
-{actions}
-
----
-
-## Notes
-
-_Add context here as you process this email._
-"""
-
-    card_path.write_text(card_content, encoding="utf-8")
-    return card_path
-
-
-# ── Gmail query & fetch ───────────────────────────────────────────────────────
-
-def build_query() -> str:
-    """Build Gmail search query: unread, in inbox or important, keyword match."""
-    keyword_clause = " OR ".join(f'"{kw}"' for kw in KEYWORDS)
-    return f"is:unread label:inbox ({keyword_clause})"
-
-
-def fetch_messages(service, query: str, max_results: int = 20) -> list[dict]:
-    """Return list of message metadata dicts matching the query."""
-    try:
-        result = service.users().messages().list(
-            userId="me", q=query, maxResults=max_results
-        ).execute()
-    except HttpError as e:
-        print(f"[gmail-monitor] API error during list: {e}")
-        return []
-
-    messages = result.get("messages", [])
-    if not messages:
-        return []
-
-    enriched = []
-    for msg in messages:
-        try:
-            full = service.users().messages().get(
-                userId="me", id=msg["id"],
-                format="metadata",
-                metadataHeaders=["From", "Subject", "Date"],
-            ).execute()
-        except HttpError as e:
-            print(f"[gmail-monitor] Could not fetch message {msg['id']}: {e}")
-            continue
-
-        headers = {h["name"]: h["value"] for h in full["payload"]["headers"]}
-        enriched.append({
-            "id": full["id"],
-            "subject": headers.get("Subject", "(no subject)"),
-            "sender": headers.get("From", "unknown"),
-            "snippet": full.get("snippet", "")[:200],
-            "internalDate": full["internalDate"],
-        })
-
-    return enriched
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Single-shot check (no continuous loop) ────────────────────────────────────
 
 def run():
     print("[gmail-monitor] Authenticating with Gmail API...")
+
+    watcher = GmailWatcher(vault_path=VAULT_PATH)
+
     try:
-        service = get_gmail_service()
+        # Initialise the Gmail service (handles token refresh / first-run OAuth)
+        watcher._service = watcher._get_service()
     except FileNotFoundError as e:
         print(f"[gmail-monitor] Setup required:\n{e}")
         return []
 
-    query = build_query()
-    print(f"[gmail-monitor] Query: {query}")
-
-    messages = fetch_messages(service, query)
-    print(f"[gmail-monitor] {len(messages)} matching unread email(s) found.")
+    # Single call — no loop, no sleep
+    items = watcher.check_for_updates()
+    print(f"[gmail-monitor] {len(items)} matching unread email(s) found.")
 
     new_cards = []
-    for msg in messages:
-        if already_logged(msg["id"]):
-            print(f"  [skip] Already logged: {msg['subject'][:60]}")
-            continue
-
-        card_path = create_inbox_card(msg)
+    for item in items:
+        card_path = watcher.create_action_file(item)
         new_cards.append(card_path)
         print(f"  [new]  Card created: {card_path.name}")
 
