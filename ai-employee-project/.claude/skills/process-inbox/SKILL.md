@@ -104,42 +104,57 @@ Any card with a missing or unrecognised `type` field → `Needs_Action/` for man
 
 **Mixed inbox:**
 ```
-[process-inbox] Found 3 card(s) in Inbox.
+[inbox-processor] Found 3 card(s) in Inbox.
 
-  [needs_action] EMAIL_20260405_143055_1a2b3c4d_Invoice_for_April.md
+  [needs_action] EMAIL_20260405_143055_<msgid>_Invoice_for_April.md
                  reason: financial keyword in subject
-  [needs_action] FILE_20260405_150000_ab12cd34_report_pdf.md
+  [needs_action] FILE_20260405_150000_report_pdf.md
                  reason: document (.pdf)
-  [done]         FILE_20260405_151000_ef56gh78_temp_test_tmp.md
+  [done]         FILE_20260405_151000_old_backup_tmp.md
                  reason: auto-discarded (temp extension: .tmp)
 
-──────────────────────────────────────────────────
-[process-inbox] Processed 3 file(s)
+--------------------------------------------------
+[inbox-processor] Processed 3 file(s)
   Moved to Needs_Action : 2
   Moved to Done         : 1
-──────────────────────────────────────────────────
-[process-inbox] Dashboard updated.
+--------------------------------------------------
+[dashboard-updater] Activity logged: - `2026-04-05 14:31` -- process-inbox: 3 card(s) processed, 2 to Needs_Action, 1 to Done
+[dashboard-updater] Vault counts synced: inbox=0, needs_action=6, done=2
+[dashboard-updater] Status updated: Inbox Processor -> ONLINE at 2026-04-05 14:31
+[inbox-processor] Dashboard updated.
 ```
 
 **Empty inbox:**
 ```
-[process-inbox] Inbox is empty — nothing to process.
+[inbox-processor] Inbox is empty - nothing to process.
 ```
 
-**Parse error:**
+**Parse error (card left in Inbox, run continues):**
 ```
-  [error] FILE_20260405_corrupt.md: frontmatter parse error — leaving in Inbox
+  [error] FILE_20260405_corrupt.md: frontmatter parse error: ...
+```
+
+**Return value:**
+```
+{
+  'processed': 3,
+  'to_needs_action': 2,
+  'to_done': 1,
+  'errors': []
+}
 ```
 
 ---
 
 ## Dependencies
 
+- `helpers/inbox_processor.py` — provides `process_inbox(vault_path)`
+- `helpers/dashboard_updater.py` — called automatically at end of run
+- `helpers/__init__.py` — makes `helpers` a Python package
+- `python-frontmatter` Python package — parses YAML frontmatter from each card
 - `Vault/Inbox/` — source folder; must exist
 - `Vault/Needs_Action/` — created automatically if missing
 - `Vault/Done/` — created automatically if missing
-- `python-frontmatter` Python package — used to parse YAML frontmatter from each card
-- `update-dashboard` skill — must be invoked after this skill completes
 
 ---
 
