@@ -80,177 +80,73 @@ When this skill is invoked, execute the following Python code using the
 available environment.
 
 ```python
-import os
-import re
-import hashlib
-from datetime import datetime
+import sys
 from pathlib import Path
+
+# Ensure project root is on the path so watchers package is importable
+PROJECT_ROOT = Path.home() / "Desktop/Hackathon/Hackathon0/ai-employee-project"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from watchers.file_watcher import FileWatcher
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MONITORED_FOLDERS = [
-    Path.home() / "Downloads",
-]
+VAULT_PATH  = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
+WATCH_DIR   = Path.home() / "Downloads"
 
-IGNORED_PATTERNS = [
-    ".ssh", ".config", ".env", "credentials", "passwords",
-]
-
-VAULT_INBOX = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault/Inbox"
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def is_blacklisted(file_path: Path) -> bool:
-    """Return True if any ignored pattern appears in the full path string."""
-    path_str = str(file_path).lower()
-    return any(pattern.lower() in path_str for pattern in IGNORED_PATTERNS)
-
-
-def human_readable_size(num_bytes: int) -> str:
-    for unit in ["B", "KB", "MB", "GB"]:
-        if num_bytes < 1024:
-            return f"{num_bytes:.1f} {unit}"
-        num_bytes /= 1024
-    return f"{num_bytes:.1f} TB"
-
-
-def suggested_actions(extension: str) -> str:
-    ext = extension.lower().lstrip(".")
-    actions_map = {
-        ("pdf",): [
-            "- [ ] Review document contents",
-            "- [ ] File in appropriate project folder",
-            "- [ ] Check if signature or response required",
-        ],
-        ("csv", "xlsx", "xls"): [
-            "- [ ] Check data source and validity",
-            "- [ ] Import to relevant tool or database",
-            "- [ ] Archive after processing",
-        ],
-        ("zip", "tar", "gz", "rar", "7z"): [
-            "- [ ] Scan archive contents before extracting",
-            "- [ ] Extract to dedicated folder",
-            "- [ ] Verify expected files are present",
-        ],
-        ("png", "jpg", "jpeg", "gif", "webp"): [
-            "- [ ] Identify image purpose",
-            "- [ ] Move to media library if permanent",
-        ],
-        ("docx", "doc", "txt", "md"): [
-            "- [ ] Read and summarise if needed",
-            "- [ ] File in appropriate project folder",
-        ],
-        ("exe", "msi", "dmg", "pkg"): [
-            "- [ ] Verify source and checksum before running",
-            "- [ ] Check VirusTotal if origin is unknown",
-            "- [ ] Install only if intentional download",
-        ],
-    }
-    for extensions, actions in actions_map.items():
-        if ext in extensions:
-            return "\n".join(actions)
-    return "- [ ] Review file and determine next action"
-
-
-def scan_folder(folder: Path) -> list[Path]:
-    """Return all files in folder (non-recursive, non-hidden, non-blacklisted)."""
-    if not folder.exists():
-        print(f"[file-monitor] Folder not found, skipping: {folder}")
-        return []
-    return [
-        f for f in folder.iterdir()
-        if f.is_file()
-        and not f.name.startswith(".")
-        and not is_blacklisted(f)
-    ]
-
-
-def already_logged(file_path: Path) -> bool:
-    """Check if a vault Inbox entry already exists for this file path."""
-    if not VAULT_INBOX.exists():
-        return False
-    fingerprint = hashlib.md5(str(file_path).encode()).hexdigest()[:8]
-    return any(fingerprint in f.name for f in VAULT_INBOX.iterdir())
-
-
-def create_inbox_card(file_path: Path) -> Path:
-    """Write a markdown task card to the vault Inbox and return its path."""
-    stat = file_path.stat()
-    now = datetime.now()
-    timestamp_slug = now.strftime("%Y%m%d_%H%M%S")
-    detected_at = now.strftime("%Y-%m-%d %H:%M:%S")
-    fingerprint = hashlib.md5(str(file_path).encode()).hexdigest()[:8]
-
-    safe_name = re.sub(r"[^\w\-.]", "_", file_path.name)
-    card_name = f"FILE_{timestamp_slug}_{fingerprint}_{safe_name}.md"
-    card_path = VAULT_INBOX / card_name
-
-    VAULT_INBOX.mkdir(parents=True, exist_ok=True)
-
-    size_bytes = stat.st_size
-    size_human = human_readable_size(size_bytes)
-    extension = file_path.suffix or "none"
-    actions = suggested_actions(extension)
-
-    card_content = f"""---
-type: file_drop
-file_name: {file_path.name}
-file_size: "{size_human} ({size_bytes} bytes)"
-file_path: {file_path}
-extension: {extension}
-detected_at: "{detected_at}"
-status: pending
-priority: normal
----
-
-# File Detected: {file_path.name}
-
-**Detected at:** {detected_at}
-**Location:** `{file_path}`
-**Size:** {size_human}
-**Type:** `{extension}`
-
----
-
-## Suggested Actions
-
-{actions}
-
----
-
-## Notes
-
-_Add context here as you process this file._
-"""
-
-    card_path.write_text(card_content, encoding="utf-8")
-    return card_path
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Single-shot scan (no continuous loop) ─────────────────────────────────────
 
 def run():
-    print("[file-monitor] Starting scan...")
+    print("[file-monitor] Starting single-shot scan...")
+
+    watcher = FileWatcher(vault_path=VAULT_PATH, watch_dir=WATCH_DIR)
+
+    # Seed the watchdog observer, snapshot current Downloads contents,
+    # then drain immediately — no sleep, no polling loop.
+    watcher.watch_dir.mkdir(parents=True, exist_ok=True)
+
+    from watchdog.observers import Observer
+    observer = Observer()
+    observer.schedule(watcher._handler, str(watcher.watch_dir), recursive=False)
+    observer.start()
+
+    # Snapshot existing files in Downloads (watchdog only fires on NEW events,
+    # so we scan the folder directly for a one-shot check).
+    from datetime import datetime, timezone
+    items = []
+    for path in watcher.watch_dir.iterdir():
+        if not path.is_file():
+            continue
+        from watchers.file_watcher import _is_safe
+        if not _is_safe(path):
+            continue
+        try:
+            stat = path.stat()
+            items.append({
+                "path": path,
+                "name": path.name,
+                "suffix": path.suffix.lower(),
+                "size_bytes": stat.st_size,
+                "detected_at": datetime.now(tz=timezone.utc),
+            })
+        except FileNotFoundError:
+            pass
+
+    observer.stop()
+    observer.join()
+
+    print(f"[file-monitor] {len(items)} eligible file(s) found in {watcher.watch_dir}")
+
     new_cards = []
-
-    for folder in MONITORED_FOLDERS:
-        files = scan_folder(folder)
-        print(f"[file-monitor] {len(files)} eligible file(s) found in {folder}")
-
-        for file_path in files:
-            if already_logged(file_path):
-                print(f"  [skip] Already logged: {file_path.name}")
-                continue
-
-            card_path = create_inbox_card(file_path)
-            new_cards.append(card_path)
-            print(f"  [new]  Card created: {card_path.name}")
+    for item in items:
+        card_path = watcher.create_action_file(item)
+        new_cards.append(card_path)
+        print(f"  [new]  Card created: {card_path.name}")
 
     if new_cards:
         print(f"\n[file-monitor] {len(new_cards)} new inbox card(s) created.")
         print("[file-monitor] Calling update-dashboard to refresh status...")
-        # Trigger the update-dashboard skill after writing cards
-        # (Claude will invoke it as a follow-up skill call)
     else:
         print("[file-monitor] No new files detected.")
 
