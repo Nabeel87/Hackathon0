@@ -108,6 +108,8 @@ class FileWatcher(BaseWatcher):
 
         size_kb = item["size_bytes"] / 1024
         detected_iso = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        # Use forward slashes so Windows paths are safe in YAML
+        file_path_safe = item["path"].as_posix()
         file_type = item["suffix"] or "unknown"
         priority = _infer_priority(item["name"], item["suffix"])
         actions = _suggested_actions(item["suffix"])
@@ -116,7 +118,7 @@ class FileWatcher(BaseWatcher):
             f"""---
 type: file
 file_name: "{item['name']}"
-file_path: "{item['path']}"
+file_path: "{file_path_safe}"
 file_size: "{size_kb:.1f} KB"
 file_type: "{file_type}"
 detected_at: "{detected_iso}"
