@@ -49,15 +49,27 @@ Runs once per invocation — not a continuous watcher.
 
 ## How to Run
 
+**Standalone (single-shot scan):**
+```
+cd ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+python watchers/file_watcher.py
+```
+
+Optional arguments:
+```
+python watchers/file_watcher.py <watch_dir> <vault_path>
+```
+
+**From Python (import):**
 ```
 Project root:  ~/Desktop/Hackathon/Hackathon0/ai-employee-project
 Module:        watchers.file_watcher
 Class:         FileWatcher(vault_path, watch_dir)
-Helper:        _is_safe(path) → bool
-Method:        create_action_file(item) → Path
+Helper:        _is_safe(path) -> bool
+Method:        create_action_file(item) -> Path
 ```
 
-Add the project root to `sys.path` before importing, then run as a single-shot scan (not a loop).
+The script adds `PROJECT_ROOT` to `sys.path` automatically when run standalone.
 
 ---
 
@@ -86,11 +98,11 @@ Each detected file produces `Vault/Inbox/FILE_YYYYMMDD_HHMMSS_<name>.md`:
 ```yaml
 ---
 type: file
-name: "report.pdf"
-path: "/home/user/Downloads/report.pdf"
-size_kb: 1230.4
+file_name: "report.pdf"
+file_path: "/home/user/Downloads/report.pdf"
+file_size: "1230.4 KB"
 file_type: ".pdf"
-detected: "2026-04-05 14:30:22 UTC"
+detected_at: "2026-04-05 14:30:22 UTC"
 priority: high
 status: pending
 ---
@@ -130,9 +142,10 @@ status: pending
 
 ## Dependencies
 
-- `watchers/file_watcher.py` — must exist; provides `FileWatcher` and `_is_safe`
+- `watchers/file_watcher.py` — provides `FileWatcher` and `_is_safe`
 - `watchers/base_watcher.py` — base class, required by `file_watcher.py`
-- `watchdog` Python package — used internally by `FileWatcher`
+- `helpers/dashboard_updater.py` — called after scan to update activity and stats
+- No third-party packages required for scanning (stdlib only: `pathlib`, `re`, `datetime`)
 - `Vault/Inbox/` folder — created automatically if missing
 
 ---
