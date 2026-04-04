@@ -1,7 +1,9 @@
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from google.auth.exceptions import TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -25,7 +27,7 @@ DEFAULT_CREDENTIALS_DIR = (
 # ── GmailWatcher ──────────────────────────────────────────────────────────────
 
 class GmailWatcher(BaseWatcher):
-    """Polls Gmail inbox for unread priority emails and creates vault cards."""
+    """Polls Gmail for unread priority emails and creates vault task cards."""
 
     def __init__(
         self,
@@ -49,17 +51,32 @@ class GmailWatcher(BaseWatcher):
         creds = None
 
         if self.token_file.exists():
-            creds = Credentials.from_authorized_user_file(str(self.token_file), SCOPES)
+            try:
+                creds = Credentials.from_authorized_user_file(
+                    str(self.token_file), SCOPES
+                )
+            except Exception as e:
+                self.logger.warning(f"Could not load token.json: {e} — re-authorizing.")
+                creds = None
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                self.logger.info("Refreshing access token...")
-                creds.refresh(Request())
-            else:
+                try:
+                    self.logger.info("Refreshing access token...")
+                    creds.refresh(Request())
+                except TransportError as e:
+                    self.logger.error(f"Token refresh failed (network error): {e}")
+                    raise
+                except Exception as e:
+                    self.logger.warning(f"Token refresh failed: {e} — re-authorizing.")
+                    creds = None
+
+            if not creds or not creds.valid:
                 if not self.credentials_file.exists():
                     raise FileNotFoundError(
                         f"credentials.json not found at {self.credentials_file}\n"
-                        "Download it from Google Cloud Console → APIs & Services → Credentials."
+                        "Download it from Google Cloud Console → "
+                        "APIs & Services → Credentials → OAuth 2.0 Client IDs."
                     )
                 self.logger.info("Opening browser for first-time authorization...")
                 flow = InstalledAppFlow.from_client_secrets_file(
@@ -100,7 +117,11 @@ class GmailWatcher(BaseWatcher):
         items = []
         for msg in messages:
             msg_id = msg["id"]
-            if msg_id in self._seen_ids or _already_logged(msg_id, self.vault_path):
+
+            if msg_id in self._seen_ids:
+                continue
+            if _already_logged(msg_id, self.vault_path):
+                self._seen_ids.add(msg_id)
                 continue
 
             try:
@@ -138,9 +159,9 @@ class GmailWatcher(BaseWatcher):
         received_iso, ts_slug = _parse_date(item["internal_date_ms"])
         priority = _infer_priority(item["subject"], item["snippet"])
         actions = _suggested_actions(item["subject"], item["snippet"])
-        subject_slug = _safe_slug(item["subject"])
 
-        card_name = f"EMAIL_{ts_slug}_{item['id'][:8]}_{subject_slug}.md"
+        # Full message ID in filename for reliable deduplication
+        card_name = f"EMAIL_{ts_slug}_{item['id']}.md"
         card_path = vault_inbox / card_name
 
         def yml(v: str) -> str:
@@ -184,7 +205,6 @@ _Add context here as you process this email._
             encoding="utf-8",
         )
 
-        # Remember this ID so we don't re-log it in the same session
         self._seen_ids.add(item["id"])
         return card_path
 
@@ -192,15 +212,17 @@ _Add context here as you process this email._
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _build_query() -> str:
+    """Build Gmail search query: unread, inbox OR important, keyword match."""
     keyword_clause = " OR ".join(f'"{kw}"' for kw in KEYWORDS)
-    return f"is:unread label:inbox ({keyword_clause})"
+    return f"is:unread (label:inbox OR label:important) ({keyword_clause})"
 
 
 def _already_logged(message_id: str, vault_path: Path) -> bool:
+    """Return True if a vault card for this exact message ID already exists."""
     inbox = vault_path / "Inbox"
     if not inbox.exists():
         return False
-    return any(message_id[:8] in f.name for f in inbox.iterdir() if f.suffix == ".md")
+    return any(message_id in f.name for f in inbox.iterdir() if f.suffix == ".md")
 
 
 def _parse_date(internal_date_ms: str) -> tuple[str, str]:
@@ -248,7 +270,9 @@ def _safe_slug(text: str, max_len: int = 40) -> str:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
 
     vault = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
     interval = 300
@@ -259,7 +283,4 @@ if __name__ == "__main__":
         interval = int(sys.argv[2])
 
     watcher = GmailWatcher(vault_path=vault, check_interval=interval)
-    try:
-        watcher.run()
-    except KeyboardInterrupt:
-        watcher.stop()
+    watcher.run()
