@@ -17,7 +17,7 @@ config:
 
 Scans all task cards in `Vault/Inbox/`, reads each card's frontmatter, applies
 routing rules to decide the destination, moves the file, and updates the
-dashboard when complete.
+dashboard when complete. Implemented in `helpers/inbox_processor.py`.
 
 ---
 
@@ -31,14 +31,36 @@ dashboard when complete.
 
 ---
 
+## How to Run
+
+**Standalone:**
+```
+cd ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+python helpers/inbox_processor.py
+```
+
+Optional argument:
+```
+python helpers/inbox_processor.py --vault /path/to/vault
+```
+
+**From Python (import):**
+```
+Module:   helpers.inbox_processor
+Function: process_inbox(vault_path) -> dict
+Returns:  { 'processed': int, 'to_needs_action': int, 'to_done': int, 'errors': list }
+```
+
+---
+
 ## Process
 
 1. List all `.md` files in `Vault/Inbox/`
 2. If the inbox is empty, log "Inbox is empty" and stop
-3. For each card, parse its YAML frontmatter to read `type`, `priority`, `subject`, `extension`, and `file_name`
+3. For each card, parse its YAML frontmatter to read `type`, `priority`, `subject`, `file_type`, and `file_name`
 4. Apply the routing rules below to determine destination: `Needs_Action/` or `Done/`
 5. Move the file to the destination folder — if a filename conflict exists, append `_1`, `_2`, etc.
-6. After all cards are processed, invoke `update-dashboard` to log activity and resync all vault counts
+6. After all cards are processed, call `helpers/dashboard_updater.py` to log activity and resync all vault counts
 
 ---
 
