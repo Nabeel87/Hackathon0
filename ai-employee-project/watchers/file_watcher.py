@@ -1,10 +1,7 @@
 import re
-import threading
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent
-from watchdog.observers import Observer
 
 from watchers.base_watcher import BaseWatcher
 
@@ -28,93 +25,75 @@ _BLACKLIST_RE = re.compile("|".join(BLACKLIST_PATTERNS), re.IGNORECASE)
 
 
 def _is_safe(path: Path) -> bool:
-    """Return False if the file should be ignored for privacy/security reasons."""
+    """Return False if the file should be skipped for privacy/security reasons."""
     name = path.name
-    # Hidden files (Unix-style dot files)
-    if name.startswith("."):
+    if name.startswith("."):           # hidden files
         return False
-    # Temp/lock files
-    if name.startswith("~") or name.endswith(".tmp") or name.endswith(".part"):
+    if name.startswith("~"):           # temp/lock files
         return False
-    # Blacklisted name patterns
-    if _BLACKLIST_RE.search(str(path)):
+    if name.endswith(".tmp") or name.endswith(".part"):
+        return False
+    if _BLACKLIST_RE.search(str(path)):  # blacklisted path patterns
         return False
     return True
-
-
-# ── Watchdog event handler ────────────────────────────────────────────────────
-
-class _NewFileHandler(FileSystemEventHandler):
-    """Collects newly created file paths into a thread-safe list."""
-
-    def __init__(self):
-        super().__init__()
-        self._lock = threading.Lock()
-        self._queue: list[Path] = []
-
-    def on_created(self, event: FileCreatedEvent):
-        if event.is_directory:
-            return
-        path = Path(event.src_path)
-        if _is_safe(path):
-            with self._lock:
-                self._queue.append(path)
-
-    def drain(self) -> list[Path]:
-        """Return and clear all queued paths."""
-        with self._lock:
-            items, self._queue = self._queue, []
-        return items
 
 
 # ── FileWatcher ───────────────────────────────────────────────────────────────
 
 class FileWatcher(BaseWatcher):
-    """Watches ~/Downloads for new files and creates vault action cards."""
+    """
+    Scans a directory for new files and creates vault action cards.
+
+    check_for_updates() lists the directory directly — no watchdog, no threads.
+    Already-logged files are tracked in self._seen_paths so repeated calls
+    within the same session don't produce duplicate cards.
+    """
 
     def __init__(
         self,
         vault_path: str | Path,
         watch_dir: str | Path | None = None,
-        check_interval: int = 30,
+        check_interval: int = 60,
     ):
         super().__init__(vault_path, check_interval)
         self.watch_dir = Path(watch_dir) if watch_dir else Path.home() / "Downloads"
-        self._handler = _NewFileHandler()
-        self._observer = Observer()
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    def run(self) -> None:
-        self.watch_dir.mkdir(parents=True, exist_ok=True)
-        self._observer.schedule(self._handler, str(self.watch_dir), recursive=False)
-        self._observer.start()
-        self.logger.info(f"Watching directory: {self.watch_dir}")
-        try:
-            super().run()
-        finally:
-            self._observer.stop()
-            self._observer.join()
-            self.logger.info("Watchdog observer stopped.")
+        self._seen_paths: set[Path] = set()
 
     # ── BaseWatcher interface ─────────────────────────────────────────────────
 
     def check_for_updates(self) -> list[dict]:
-        """Drain queued new-file events and return metadata dicts."""
-        paths = self._handler.drain()
+        """List watch_dir, filter safe files, return new ones as metadata dicts."""
+        if not self.watch_dir.exists():
+            self.logger.warning(f"Watch directory not found: {self.watch_dir}")
+            return []
+
         items = []
-        for path in paths:
+        for path in sorted(self.watch_dir.iterdir()):
+            if not path.is_file():
+                continue
+            if not _is_safe(path):
+                continue
+            if path in self._seen_paths:
+                continue
+            if _already_logged(path, self.vault_path):
+                self._seen_paths.add(path)
+                continue
+
             try:
                 stat = path.stat()
-                items.append({
-                    "path": path,
-                    "name": path.name,
-                    "suffix": path.suffix.lower(),
-                    "size_bytes": stat.st_size,
-                    "detected_at": datetime.now(tz=timezone.utc),
-                })
-            except FileNotFoundError:
-                self.logger.warning(f"File disappeared before stat: {path}")
+            except OSError as e:
+                self.logger.warning(f"Could not stat {path.name}: {e}")
+                continue
+
+            self._seen_paths.add(path)
+            items.append({
+                "path": path,
+                "name": path.name,
+                "suffix": path.suffix.lower(),
+                "size_bytes": stat.st_size,
+                "detected_at": datetime.now(tz=timezone.utc),
+            })
+
         return items
 
     def create_action_file(self, item: dict) -> Path:
@@ -125,11 +104,10 @@ class FileWatcher(BaseWatcher):
         dt: datetime = item["detected_at"]
         ts_slug = dt.strftime("%Y%m%d_%H%M%S")
         name_slug = _safe_slug(item["name"])
-        card_name = f"FILE_{ts_slug}_{name_slug}.md"
-        card_path = vault_inbox / card_name
+        card_path = vault_inbox / f"FILE_{ts_slug}_{name_slug}.md"
 
         size_kb = item["size_bytes"] / 1024
-        received_iso = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+        detected_iso = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
         file_type = item["suffix"] or "unknown"
         priority = _infer_priority(item["name"], item["suffix"])
         actions = _suggested_actions(item["suffix"])
@@ -137,11 +115,11 @@ class FileWatcher(BaseWatcher):
         card_path.write_text(
             f"""---
 type: file
-name: "{item['name']}"
-path: "{item['path']}"
-size_kb: {size_kb:.1f}
+file_name: "{item['name']}"
+file_path: "{item['path']}"
+file_size: "{size_kb:.1f} KB"
 file_type: "{file_type}"
-detected: "{received_iso}"
+detected_at: "{detected_iso}"
 priority: {priority}
 status: pending
 ---
@@ -151,7 +129,7 @@ status: pending
 **Path:** `{item['path']}`
 **Size:** {size_kb:.1f} KB
 **Type:** {file_type}
-**Detected:** {received_iso}
+**Detected:** {detected_iso}
 **Priority:** {priority}
 
 ---
@@ -173,6 +151,15 @@ _Add context here as you process this file._
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _already_logged(path: Path, vault_path: Path) -> bool:
+    """Return True if a vault card referencing this filename already exists."""
+    inbox = vault_path / "Inbox"
+    if not inbox.exists():
+        return False
+    slug = _safe_slug(path.name)
+    return any(slug in f.name for f in inbox.iterdir() if f.suffix == ".md")
+
+
 def _safe_slug(text: str, max_len: int = 40) -> str:
     slug = re.sub(r"[^\w\s-]", "", text).strip()
     slug = re.sub(r"[\s_-]+", "_", slug)
@@ -180,11 +167,9 @@ def _safe_slug(text: str, max_len: int = 40) -> str:
 
 
 def _infer_priority(name: str, suffix: str) -> str:
-    high_suffixes = {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".zip", ".exe", ".dmg"}
-    if suffix in high_suffixes:
+    if suffix in {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".zip", ".exe", ".dmg"}:
         return "high"
-    urgent_words = re.compile(r"urgent|invoice|contract|payment|asap", re.IGNORECASE)
-    if urgent_words.search(name):
+    if re.search(r"urgent|invoice|contract|payment|asap", name, re.IGNORECASE):
         return "high"
     return "normal"
 
@@ -228,7 +213,9 @@ def _suggested_actions(suffix: str) -> str:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
 
     vault = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
     watch = Path.home() / "Downloads"
@@ -238,8 +225,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         vault = Path(sys.argv[2])
 
-    watcher = FileWatcher(vault_path=vault, watch_dir=watch, check_interval=30)
-    try:
-        watcher.run()
-    except KeyboardInterrupt:
-        watcher.stop()
+    watcher = FileWatcher(vault_path=vault, watch_dir=watch)
+    watcher.run()
