@@ -82,11 +82,8 @@ def _read(vault_path: Path) -> str:
 
 
 def _write(vault_path: Path, content: str) -> None:
-    """Write atomically via a .tmp swap to avoid partial writes."""
-    path = _dashboard_path(vault_path)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(path)
+    """Write Dashboard.md back to disk."""
+    _dashboard_path(vault_path).write_text(content, encoding="utf-8")
 
 
 def _stamp(content: str) -> str:
@@ -210,7 +207,7 @@ def update_stats(
     content = content[: match.start()] + match.group(1) + str(new_value) + match.group(3) + content[match.end():]
     content = _stamp(content)
     _write(vault_path, content)
-    print(f"[dashboard-updater] Stat updated: {label}  {current} → {new_value}")
+    print(f"[dashboard-updater] Stat updated: {label}  {current} -> {new_value}")
 
 
 def update_component_status(
@@ -276,7 +273,7 @@ def update_component_status(
     content = content[: match.start()] + new_row + content[match.end():]
     content = _stamp(content)
     _write(vault_path, content)
-    print(f"[dashboard-updater] Status updated: {resolved} → {status_text} at {now}")
+    print(f"[dashboard-updater] Status updated: {resolved} -> {status_text} at {now}")
 
 
 def refresh_vault_counts(vault_path: str | Path) -> None:
