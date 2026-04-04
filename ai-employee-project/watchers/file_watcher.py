@@ -225,7 +225,7 @@ if __name__ == "__main__":
         sys.path.insert(0, str(PROJECT_ROOT))
 
     vault = Path.home() / "Desktop/Hackathon/Hackathon0/AI_Employee_Vault"
-    watch = Path.home() / "Downloads"
+    watch = Path.home() / "Downloads/file_check"
 
     if len(sys.argv) > 1:
         watch = Path(sys.argv[1])
