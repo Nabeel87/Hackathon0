@@ -1,7 +1,6 @@
 import time
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
 from pathlib import Path
 
 
@@ -38,31 +37,52 @@ class BaseWatcher(ABC):
         ...
 
     def run(self) -> None:
-        """Main polling loop. Runs until interrupted or stop() is called."""
-        self.logger.info(f"Starting {self.__class__.__name__} (interval={self.check_interval}s, vault={self.vault_path})")
+        """Main polling loop. Runs until CTRL+C or stop() is called."""
+        self.logger.info(
+            f"Starting {self.__class__.__name__} "
+            f"(interval={self.check_interval}s, vault={self.vault_path})"
+        )
         self._running = True
 
-        while self._running:
-            try:
-                items = self.check_for_updates()
-                self.logger.info(f"{len(items)} new item(s) found.")
+        try:
+            while self._running:
+                try:
+                    items = self.check_for_updates()
+                except Exception as e:
+                    self.logger.error(f"check_for_updates failed: {e}")
+                    items = []
+
+                if items:
+                    self.logger.info(f"{len(items)} new item(s) found.")
+                else:
+                    self.logger.info("No new items.")
 
                 for item in items:
                     try:
                         path = self.create_action_file(item)
                         self.logger.info(f"Action file created: {path.name}")
                     except Exception as e:
-                        self.logger.error(f"Failed to create action file for item {item}: {e}")
+                        self.logger.error(f"Failed to create action file: {e}")
 
-            except Exception as e:
-                self.logger.error(f"Error during check_for_updates: {e}")
+                # Sleep in short ticks so stop() takes effect promptly
+                self._interruptible_sleep(self.check_interval)
 
-            self.logger.info(f"Next check in {self.check_interval}s...")
-            time.sleep(self.check_interval)
-
-        self.logger.info(f"{self.__class__.__name__} stopped.")
+        except KeyboardInterrupt:
+            self.logger.info("Keyboard interrupt received — shutting down.")
+        finally:
+            self._running = False
+            self.logger.info(f"{self.__class__.__name__} stopped.")
 
     def stop(self) -> None:
-        """Signal the run loop to exit after the current iteration."""
+        """Signal the run loop to exit after the current sleep tick."""
         self._running = False
         self.logger.info("Stop signal received.")
+
+    def _interruptible_sleep(self, seconds: int) -> None:
+        """Sleep in 1-second ticks so stop() and CTRL+C respond within 1 second."""
+        elapsed = 0
+        while self._running and elapsed < seconds:
+            time.sleep(1)
+            elapsed += 1
+        if self._running:
+            self.logger.info(f"Next check in {self.check_interval}s...")
