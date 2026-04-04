@@ -49,16 +49,29 @@ never sends, deletes, or modifies anything in Gmail.
 
 ## How to Run
 
+**Standalone (single-shot check):**
+```
+cd ~/Desktop/Hackathon/Hackathon0/ai-employee-project
+python watchers/gmail_watcher.py
+```
+
+Optional arguments:
+```
+python watchers/gmail_watcher.py <vault_path> <check_interval_seconds>
+```
+
+**From Python (import):**
 ```
 Project root:  ~/Desktop/Hackathon/Hackathon0/ai-employee-project
 Module:        watchers.gmail_watcher
 Class:         GmailWatcher(vault_path)
-Methods:       _get_service()         → authenticates, returns Gmail API service
-               check_for_updates()    → list of email dicts
-               create_action_file(item) → Path of created vault card
+Methods:       _get_service()           -> authenticates, returns Gmail API service
+               check_for_updates()      -> list of email dicts
+               create_action_file(item) -> Path of created vault card
 ```
 
-Add the project root to `sys.path` before importing. Call `check_for_updates()` exactly once — no loop, no sleep.
+The script adds `PROJECT_ROOT` to `sys.path` automatically when run standalone.
+Call `check_for_updates()` exactly once per invocation — no loop, no sleep.
 
 ---
 
@@ -157,5 +170,5 @@ message_id: "1a2b3c4d5e6f7a8b"
 - Keywords can be extended by editing `config.keywords` in this frontmatter and updating `KEYWORDS` in `watchers/gmail_watcher.py`
 - Message IDs are stored in vault card filenames for deduplication — do not rename cards manually
 - If `token.json` is deleted or revoked, the next run will re-open the browser for authorization
-- This skill checks only `label:inbox` — emails in other labels (Spam, Promotions) are not scanned
+- This skill checks `label:inbox OR label:important` — Spam and Promotions labels are not scanned
 - Always call `update-dashboard` after this skill to keep email count and activity log current
