@@ -61,7 +61,7 @@ class FileWatcher(BaseWatcher):
         check_interval: int = 60,
     ):
         super().__init__(vault_path, check_interval)
-        self.watch_dir = Path(watch_dir) if watch_dir else Path.home() / "Downloads"
+        self.watch_dir = Path(watch_dir) if watch_dir else Path.home() / "Downloads/file_check"
         self._seen_paths: set[Path] = set()
 
     # ── BaseWatcher interface ─────────────────────────────────────────────────
