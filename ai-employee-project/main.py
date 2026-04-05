@@ -180,23 +180,23 @@ class WatcherThread:
         self.logger.info(f"{self.name} thread exiting.")
 
     def _update_dashboard(self, vault_path: Path, n: int) -> None:
-        """Log activity + update stats + set component status on dashboard."""
+        """Log activity + update stats + resync all vault counts on dashboard."""
         try:
+            from helpers.dashboard_updater import update_stats, refresh_vault_counts
             component_map = {
                 "FileWatcher":  ("File Monitor",  "files_monitored"),
                 "GmailWatcher": ("Gmail Monitor", "emails_checked"),
             }
-            component, stat_key = component_map.get(
-                self.name, (self.name, None)
-            )
+            component, stat_key = component_map.get(self.name, (self.name, None))
             label = "file(s)" if self.name == "FileWatcher" else "email(s)"
             activity = f"{component}: {n} new {label} detected"
 
             update_activity(vault_path, activity)
             update_component_status(vault_path, component, "online")
             if stat_key:
-                from helpers.dashboard_updater import update_stats
                 update_stats(vault_path, stat_key, n, operation="increment")
+            # Resync inbox/needs_action/done counts accurately
+            refresh_vault_counts(vault_path)
 
             self.logger.info(f"Dashboard updated: {activity}")
         except Exception as exc:
@@ -262,15 +262,31 @@ class Orchestrator:
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def _main_loop(self) -> None:
-        """Block the main thread, running health checks until shutdown."""
-        last_health = time.monotonic()
+        """Block the main thread, running health checks and dashboard refreshes until shutdown."""
+        last_health    = time.monotonic()
+        last_dashboard = time.monotonic()
 
         while not self._shutdown.is_set():
             now = time.monotonic()
+
+            if now - last_dashboard >= 60:
+                self._refresh_dashboard()
+                last_dashboard = now
+
             if now - last_health >= HEALTH_CHECK_INTERVAL:
                 self._health_check()
                 last_health = now
+
             self._shutdown.wait(timeout=5)
+
+    def _refresh_dashboard(self) -> None:
+        """Sync vault folder counts and update component statuses every 60s."""
+        try:
+            from helpers.dashboard_updater import refresh_vault_counts
+            refresh_vault_counts(self.vault_path)
+            self.logger.info("Dashboard refreshed (60s tick).")
+        except Exception as exc:
+            self.logger.warning(f"Dashboard refresh failed: {exc}")
 
     # ── Health check ──────────────────────────────────────────────────────────
 
@@ -353,6 +369,7 @@ def main() -> None:
         print()
         logger.info(f"Signal {sig} received — initiating graceful shutdown...")
         orchestrator.shutdown()
+        logging.shutdown()
         sys.exit(0)
 
     signal.signal(signal.SIGINT,  _handle_signal)

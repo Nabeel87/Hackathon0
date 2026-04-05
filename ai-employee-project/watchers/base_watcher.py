@@ -57,12 +57,20 @@ class BaseWatcher(ABC):
                 else:
                     self.logger.info("No new items.")
 
+                created = []
                 for item in items:
                     try:
                         path = self.create_action_file(item)
+                        created.append(path)
                         self.logger.info(f"Action file created: {path.name}")
                     except Exception as e:
                         self.logger.error(f"Failed to create action file: {e}")
+
+                if created:
+                    try:
+                        self.post_cycle(len(created))
+                    except Exception as e:
+                        self.logger.error(f"post_cycle failed: {e}")
 
                 # Sleep in short ticks so stop() takes effect promptly
                 self._interruptible_sleep(self.check_interval)
@@ -72,6 +80,12 @@ class BaseWatcher(ABC):
         finally:
             self._running = False
             self.logger.info(f"{self.__class__.__name__} stopped.")
+
+    def post_cycle(self, created_count: int) -> None:
+        """
+        Called after each poll cycle where new items were found.
+        Override in subclasses to update the dashboard or run side effects.
+        """
 
     def stop(self) -> None:
         """Signal the run loop to exit after the current sleep tick."""

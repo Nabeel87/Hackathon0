@@ -16,6 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from watchers.base_watcher import BaseWatcher
+from helpers.dashboard_updater import update_activity, update_component_status, update_stats
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -156,6 +157,17 @@ class GmailWatcher(BaseWatcher):
 
         return items
 
+    def post_cycle(self, created_count: int) -> None:
+        """Update dashboard after new emails are detected."""
+        try:
+            from helpers.dashboard_updater import refresh_vault_counts
+            update_activity(self.vault_path, f"Gmail Monitor: {created_count} new email(s) detected")
+            update_component_status(self.vault_path, "Gmail Monitor", "online")
+            update_stats(self.vault_path, "emails_checked", created_count, operation="increment")
+            refresh_vault_counts(self.vault_path)
+        except Exception as e:
+            self.logger.warning(f"Dashboard update failed: {e}")
+
     def create_action_file(self, item: dict) -> Path:
         """Write an EMAIL_*.md card to vault Inbox/ and return its path."""
         vault_inbox = self.vault_path / "Inbox"
@@ -223,10 +235,12 @@ def _build_query() -> str:
 
 
 def _already_logged(message_id: str, vault_path: Path) -> bool:
-    """Return True if a vault card for this exact message ID already exists."""
-    inbox = vault_path / "Inbox"
-    if not inbox.exists():
-        return False
+    """Return True if a vault card for this exact message ID exists in any vault folder."""
+    for folder in ("Inbox", "Needs_Action", "Done"):
+        d = vault_path / folder
+        if d.exists() and any(message_id in f.name for f in d.iterdir() if f.suffix == ".md"):
+            return True
+    return False
     return any(message_id in f.name for f in inbox.iterdir() if f.suffix == ".md")
 
 

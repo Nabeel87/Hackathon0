@@ -5,9 +5,12 @@ description = "Bronze Tier AI Employee - File & Gmail monitoring with agent skil
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "watchdog",
-    "python-frontmatter",
-    "google-api-python-client",
-    "google-auth-httplib2",
-    "google-auth-oauthlib",
+    "watchdog>=6.0.0",
+    "python-frontmatter>=1.1.0",
+    "google-api-python-client>=2.193.0",
+    "google-auth-httplib2>=0.3.1",
+    "google-auth-oauthlib>=1.3.1",
 ]
+
+[project.scripts]
+ai-employee = "main:main"

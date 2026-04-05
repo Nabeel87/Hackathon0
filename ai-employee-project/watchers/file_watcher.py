@@ -9,6 +9,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from watchers.base_watcher import BaseWatcher
+from helpers.dashboard_updater import update_activity, update_component_status, update_stats
 
 # ── Security blacklist ────────────────────────────────────────────────────────
 
@@ -101,6 +102,17 @@ class FileWatcher(BaseWatcher):
 
         return items
 
+    def post_cycle(self, created_count: int) -> None:
+        """Update dashboard after new files are detected."""
+        try:
+            from helpers.dashboard_updater import refresh_vault_counts
+            update_activity(self.vault_path, f"File Monitor: {created_count} new file(s) detected")
+            update_component_status(self.vault_path, "File Monitor", "online")
+            update_stats(self.vault_path, "files_monitored", created_count, operation="increment")
+            refresh_vault_counts(self.vault_path)
+        except Exception as e:
+            self.logger.warning(f"Dashboard update failed: {e}")
+
     def create_action_file(self, item: dict) -> Path:
         """Write a FILE_*.md card to vault Inbox/ and return its path."""
         vault_inbox = self.vault_path / "Inbox"
@@ -159,12 +171,13 @@ _Add context here as you process this file._
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _already_logged(path: Path, vault_path: Path) -> bool:
-    """Return True if a vault card referencing this filename already exists."""
-    inbox = vault_path / "Inbox"
-    if not inbox.exists():
-        return False
+    """Return True if a vault card referencing this filename exists in any vault folder."""
     slug = _safe_slug(path.name)
-    return any(slug in f.name for f in inbox.iterdir() if f.suffix == ".md")
+    for folder in ("Inbox", "Needs_Action", "Done"):
+        d = vault_path / folder
+        if d.exists() and any(slug in f.name for f in d.iterdir() if f.suffix == ".md"):
+            return True
+    return False
 
 
 def _safe_slug(text: str, max_len: int = 40) -> str:
