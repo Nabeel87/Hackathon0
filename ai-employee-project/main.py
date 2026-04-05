@@ -37,16 +37,16 @@ RESTART_DELAY         = 10    # seconds to wait before restarting a crashed watc
 LOG_DIR               = _PROJECT_ROOT / "logs"
 LOG_FILE              = LOG_DIR / "main.log"
 
-BANNER = r"""
-╔══════════════════════════════════════════════════════════╗
-║           AI EMPLOYEE — 24/7 ORCHESTRATOR                ║
-║                                                          ║
-║   Watchers  :  FileWatcher  |  GmailWatcher              ║
-║   Dashboard :  AI_Employee_Vault/Dashboard.md            ║
-║   Logs      :  logs/main.log                             ║
-║                                                          ║
-║   Press CTRL+C to shut down gracefully.                  ║
-╚══════════════════════════════════════════════════════════╝
+BANNER = """
++----------------------------------------------------------+
+|           AI EMPLOYEE - 24/7 ORCHESTRATOR                |
+|                                                          |
+|   Watchers  :  FileWatcher  |  GmailWatcher              |
+|   Dashboard :  AI_Employee_Vault/Dashboard.md            |
+|   Logs      :  logs/main.log                             |
+|                                                          |
+|   Press CTRL+C to shut down gracefully.                  |
++----------------------------------------------------------+
 """
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
@@ -130,29 +130,77 @@ class WatcherThread:
         self.logger.info(f"{self.name} thread started (restart #{self.restart_count})")
 
     def _run_loop(self) -> None:
-        """Inner loop: run watcher, catch crashes, restart after delay."""
+        """
+        Own poll loop — replaces BaseWatcher.run() so we can inject
+        dashboard updates after every cycle without modifying watcher classes.
+        """
+        try:
+            self._watcher = self.watcher_cls(**self.watcher_kwargs)
+        except Exception as exc:
+            self.last_error = str(exc)
+            self.logger.error(f"{self.name} init failed: {exc}", exc_info=True)
+            return
+
+        vault_path     = self._watcher.vault_path
+        check_interval = self._watcher.check_interval
+
+        self.logger.info(
+            f"{self.name} polling every {check_interval}s  "
+            f"vault={vault_path}"
+        )
+
         while not self._stop_event.is_set():
+            # ── one poll cycle ────────────────────────────────────────────────
             try:
-                self._watcher = self.watcher_cls(**self.watcher_kwargs)
-                self._watcher.run()
+                items = self._watcher.check_for_updates()
             except Exception as exc:
                 self.last_error = str(exc)
-                self.logger.error(
-                    f"{self.name} crashed: {exc}",
-                    exc_info=True,
-                )
+                self.logger.error(f"{self.name} check_for_updates failed: {exc}", exc_info=True)
+                items = []
 
-            if self._stop_event.is_set():
-                break
+            created = []
+            for item in items:
+                try:
+                    path = self._watcher.create_action_file(item)
+                    created.append(path)
+                    self.logger.info(f"Card created: {path.name}")
+                except Exception as exc:
+                    self.logger.error(f"create_action_file failed: {exc}", exc_info=True)
 
-            self.restart_count += 1
-            self.logger.warning(
-                f"{self.name} will restart in {RESTART_DELAY}s "
-                f"(restart #{self.restart_count})"
-            )
-            self._stop_event.wait(RESTART_DELAY)
+            # ── dashboard update after every cycle ────────────────────────────
+            if created:
+                self._update_dashboard(vault_path, len(created))
+
+            # ── sleep in 1-second ticks ───────────────────────────────────────
+            elapsed = 0
+            while self._stop_event.is_set() is False and elapsed < check_interval:
+                self._stop_event.wait(timeout=1)
+                elapsed += 1
 
         self.logger.info(f"{self.name} thread exiting.")
+
+    def _update_dashboard(self, vault_path: Path, n: int) -> None:
+        """Log activity + update stats + set component status on dashboard."""
+        try:
+            component_map = {
+                "FileWatcher":  ("File Monitor",  "files_monitored"),
+                "GmailWatcher": ("Gmail Monitor", "emails_checked"),
+            }
+            component, stat_key = component_map.get(
+                self.name, (self.name, None)
+            )
+            label = "file(s)" if self.name == "FileWatcher" else "email(s)"
+            activity = f"{component}: {n} new {label} detected"
+
+            update_activity(vault_path, activity)
+            update_component_status(vault_path, component, "online")
+            if stat_key:
+                from helpers.dashboard_updater import update_stats
+                update_stats(vault_path, stat_key, n, operation="increment")
+
+            self.logger.info(f"Dashboard updated: {activity}")
+        except Exception as exc:
+            self.logger.warning(f"Dashboard update failed: {exc}")
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
